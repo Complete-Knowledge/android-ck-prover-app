@@ -1,15 +1,20 @@
 package com.example.androidck;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.res.AssetManager;
 import android.os.Bundle;
 import android.os.Looper;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyInfo;
 import android.security.keystore.KeyProperties;
+import android.text.method.ScrollingMovementMethod;
 import android.util.Base64;
 import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -44,6 +49,7 @@ import org.bouncycastle.asn1.ASN1Sequence;
 import org.bouncycastle.asn1.ASN1TaggedObject;
 import org.bouncycastle.asn1.util.ASN1Dump;
 import org.web3j.crypto.Credentials;
+import org.web3j.crypto.Keys;
 import org.web3j.crypto.Sign;
 import org.web3j.utils.Numeric;
 
@@ -59,19 +65,22 @@ import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
 import java.security.cert.Certificate;
+import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.security.spec.ECGenParameterSpec;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
+import java.util.stream.Collectors;
 
 import javax.crypto.SecretKeyFactory;
 
 public class MainActivity extends AppCompatActivity {
 
-    private void getKeystore(byte[] challenge) throws KeyStoreException, IOException, NoSuchAlgorithmException, NoSuchProviderException, InvalidAlgorithmParameterException, CertificateException {
+    private String getKeystore(byte[] challenge) throws KeyStoreException, IOException, NoSuchAlgorithmException, NoSuchProviderException, InvalidAlgorithmParameterException, CertificateException {
         // Create KeyPairGenerator and set generation parameters for an ECDSA key pair
         // using the NIST P-256 curve.  "Key1" is the key alias.
         KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(
@@ -79,9 +88,7 @@ public class MainActivity extends AppCompatActivity {
         keyPairGenerator.initialize(
                 new KeyGenParameterSpec.Builder("Key1", KeyProperties.PURPOSE_SIGN)
                         .setAlgorithmParameterSpec(new ECGenParameterSpec("secp256r1"))
-                        .setDigests(KeyProperties.DIGEST_SHA256,
-                                KeyProperties.DIGEST_SHA384,
-                                KeyProperties.DIGEST_SHA512)
+                        .setDigests(KeyProperties.DIGEST_SHA256)
                         // Only permit the private key to be used if the user
                         // authenticated within the last five minutes.
                         .setUserAuthenticationRequired(true)
@@ -106,6 +113,7 @@ public class MainActivity extends AppCompatActivity {
             Log.d("CKVerifier", "Complete cert: " + Numeric.toHexString(cert.getEncoded()));
             Log.d("CKVerifier", cert.getSigAlgName());
             Log.d("CKVerifier", cert.toString());
+            Log.d("CKVerifier", cert.getPublicKey().getAlgorithm() + " " + cert.getPublicKey().toString());
             //Log.d("CKVerifier", cert.getSig());
             if (i > 0) {
                 continue;
@@ -125,102 +133,25 @@ public class MainActivity extends AppCompatActivity {
             Log.d("CKVerifier", String.valueOf(decodedSequence));
             Log.d("CKVerifier", ASN1Dump.dumpAsString(decodedSequence));
         }
-    }
 
-    private void submitIntegrity(Map<String, String> message) {
-        // create the NONCE  Base64-encoded, URL-safe, and non-wrapped String
-
-        String myNonce = Base64.encodeToString((message.get("message") + "|" + message.get("signature")).getBytes(),
-                Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
-
-        // Create an instance of a manager.
-        IntegrityManager myIntegrityManager = IntegrityManagerFactory.create(getApplicationContext());
-
-        // Request the integrity token by providing a nonce.
-        Task<IntegrityTokenResponse> myIntegrityTokenResponse = myIntegrityManager
-                .requestIntegrityToken(IntegrityTokenRequest
-                        .builder()
-                        .setNonce(myNonce)
-                        .setCloudProjectNumber(632149259757L)         // necessary only if sold outside Google Play
-                        .build());
-
-        // get the time to check against the decoded integrity token time
-        long timeRequest = Calendar.getInstance().getTimeInMillis();
-
-        myIntegrityTokenResponse.addOnFailureListener(e -> Log.d("AndroidCK", "Integrity token response: Failed: " + e));
-        myIntegrityTokenResponse.addOnCompleteListener(e -> Log.d("AndroidCK", "Integrity token response: Complete: " + e));
-        myIntegrityTokenResponse.addOnSuccessListener(myIntegrityTokenResponse1 -> {
+        return Arrays.stream(certs).map(cert -> {
             try {
-                String token = myIntegrityTokenResponse1.token();
-
-                DecodeIntegrityTokenRequest requestObj = new DecodeIntegrityTokenRequest();
-                requestObj.setIntegrityToken(token);
-
-                //Configure your credentials from the downloaded Json file from the resource
-                AssetManager assetManager = getApplicationContext().getAssets();
-                InputStream jsonStream = assetManager.open("credentials.json");
-                GoogleCredentials credentials = GoogleCredentials.fromStream(jsonStream);
-                GoogleCredentials scopedCredentials = credentials.createScoped(PlayIntegrityScopes.PLAYINTEGRITY);
-                HttpRequestInitializer requestInitializer = new HttpCredentialsAdapter(scopedCredentials);
-
-                HttpTransport HTTP_TRANSPORT = new NetHttpTransport();
-                JsonFactory JSON_FACTORY  = new JacksonFactory();
-                GoogleClientRequestInitializer initializer = new PlayIntegrityRequestInitializer();
-
-                PlayIntegrity.Builder playIntegrity = new PlayIntegrity.Builder(HTTP_TRANSPORT, JSON_FACTORY, requestInitializer).setApplicationName("your-project")
-                        .setGoogleClientRequestInitializer(initializer);
-                PlayIntegrity play = playIntegrity.build();
-
-                // the DecodeIntegrityToken must be run on a parallel thread
-                Thread thread = new Thread(() -> {
-                    try  {
-                        Log.d("Android CK", requestObj.toPrettyString());
-                        Log.d("Android CK", requestObj.getIntegrityToken());
-                        DecodeIntegrityTokenResponse response = play.v1().decodeIntegrityToken("com.project.name", requestObj).execute();
-                        Log.d("Android CK", response.toPrettyString());
-                        TokenPayloadExternal payloadExternal = response.getTokenPayloadExternal();
-                        String licensingVerdict = payloadExternal.getAccountDetails().getAppLicensingVerdict();
-                        if (licensingVerdict.equalsIgnoreCase("LICENSED")) {
-                            // Looks good! LICENSED app
-                        } else {
-                            // LICENSE NOT OK
-                        }
-                        Log.d("Android CK", "Request details: " + String.valueOf(payloadExternal.getRequestDetails().toPrettyString()));
-                        Log.d("Android CK", "Application integrity: " + String.valueOf(payloadExternal.getAppIntegrity().toPrettyString()));
-                        Log.d("Android CK", "Device integrity: " + String.valueOf(payloadExternal.getDeviceIntegrity().getDeviceRecognitionVerdict()));
-                        Looper.prepare();
-                        Toast toast = Toast.makeText(getApplicationContext(), "Response: " + licensingVerdict,
-                                Toast.LENGTH_LONG);
-                        toast.show();
-                    } catch (Exception e) {
-                        //  LICENSE error
-                        Looper.prepare();
-                        Toast toast = Toast.makeText(getApplicationContext(), "LICENSE ERROR",
-                                Toast.LENGTH_LONG);
-                        toast.show();
-                        e.printStackTrace();
-                    }
-                });
-
-                // execute the parallel thread
-                thread.start();
-
-            } catch (Error | Exception e) {
-                // LICENSE error
-                Toast toast = Toast.makeText(getApplicationContext(), "LICENSE ERROR 2",
-                        Toast.LENGTH_LONG);
-                toast.show();
+                return Numeric.toHexString(cert.getEncoded());
+            } catch (CertificateEncodingException e) {
                 e.printStackTrace();
-                System.out.println("ouch");
             }
-        });
-
+            return "";
+        }).collect(Collectors.joining("\n"));
     }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        // Make result view scrollable
+        TextView certsView = findViewById(R.id.certificateTextView);
+        certsView.setMovementMethod(new ScrollingMovementMethod());
 
         Button button = findViewById(R.id.goButton);
         button.setOnClickListener(view -> {
@@ -229,12 +160,9 @@ public class MainActivity extends AppCompatActivity {
 
             try {
                 Credentials credentials = Credentials.create(privateKey);
-                String address = credentials.getAddress();
-                /*Toast toast = Toast.makeText(getApplicationContext(), "Android CK: " + address,
-                        Toast.LENGTH_LONG);
-                toast.show();*/
+                String address = Keys.toChecksumAddress(credentials.getAddress());
 
-                String nonceMessage = "AndroidCK " + new Random().nextInt();
+                String nonceMessage = "Android CK Verification";
                 Sign.SignatureData signature = Sign.signPrefixedMessage(nonceMessage.getBytes(StandardCharsets.UTF_8),
                         credentials.getEcKeyPair());
 
@@ -243,28 +171,14 @@ public class MainActivity extends AppCompatActivity {
                 System.arraycopy(signature.getS(), 0, hexSignature, 32, 32);
                 System.arraycopy(signature.getV(), 0, hexSignature, 64, 1);
 
-                /*toast = Toast.makeText(getApplicationContext(), "Android CK: " + Numeric.toHexString(hexSignature),
-                        Toast.LENGTH_LONG);
-                toast.show();*/
+                String certData = getKeystore(hexSignature);
+                ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                ClipData clip = ClipData.newPlainText("Android CK certificates", certData);
+                clipboard.setPrimaryClip(clip);
 
-                Map<String, String> map = new HashMap<String, String>() {{
-                    put("message", nonceMessage);
-                    put("signature", Numeric.toHexString(hexSignature));
-                }};
-
-                /*toast = Toast.makeText(getApplicationContext(), "Android CK: " + nonceMessage,
-                        Toast.LENGTH_LONG);
-                toast.show();*/
-
-                System.out.println("Doing stuff");
-                getKeystore(hexSignature);
-                //submitIntegrity(map);
-
-            } catch (NumberFormatException e) {
-                Toast toast = Toast.makeText(getApplicationContext(), "Android CK: " + e.getMessage(),
-                        Toast.LENGTH_LONG);
-                toast.show();
+                certsView.setText(String.format("%s\n\nSuccess! Certificates are copied to the clipboard!", address));
             } catch (Exception e) {
+                certsView.setText(e.getMessage());
                 e.printStackTrace();
             }
         });
