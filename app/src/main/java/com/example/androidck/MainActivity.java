@@ -93,7 +93,7 @@ public class MainActivity extends AppCompatActivity {
                         // authenticated within the last five minutes.
                         .setUserAuthenticationRequired(true)
                         .setUserAuthenticationValidityDurationSeconds(5 * 60)
-                        // Request an attestation with challenge "hello world".
+                        // Request an attestation with the message signature
                         .setAttestationChallenge(challenge)
                         .build());
         // Generate the key pair. This will result in calls to both generate_key() and
@@ -109,12 +109,12 @@ public class MainActivity extends AppCompatActivity {
         Log.d("CKVerifier", "Certs length: " + certs.length);
         for (int i = 0; i < certs.length; i++) {
             X509Certificate cert = (X509Certificate) certs[i];
-            Log.d("CKVerifier", "Cert " + i + ": " + cert.getIssuerDN());
+            /*Log.d("CKVerifier", "Cert " + i + ": " + cert.getIssuerDN());
             Log.d("CKVerifier", "Complete cert: " + Numeric.toHexString(cert.getEncoded()));
             Log.d("CKVerifier", cert.getSigAlgName());
             Log.d("CKVerifier", cert.toString());
             Log.d("CKVerifier", cert.getPublicKey().getAlgorithm() + " " + cert.getPublicKey().toString());
-            //Log.d("CKVerifier", cert.getSig());
+            */
             if (i > 0) {
                 continue;
             }
@@ -165,6 +165,9 @@ public class MainActivity extends AppCompatActivity {
                 String nonceMessage = "Android CK Verification";
                 Sign.SignatureData signature = Sign.signPrefixedMessage(nonceMessage.getBytes(StandardCharsets.UTF_8),
                         credentials.getEcKeyPair());
+                Log.d("CKVerifier", "r: " + Numeric.toHexString(signature.getR()));
+                Log.d("CKVerifier", "s: " + Numeric.toHexString(signature.getS()));
+                Log.d("CKVerifier", "v: " + Numeric.toHexString(signature.getV()));
 
                 byte[] hexSignature = new byte[65];
                 System.arraycopy(signature.getR(), 0, hexSignature, 0, 32);
@@ -172,6 +175,8 @@ public class MainActivity extends AppCompatActivity {
                 System.arraycopy(signature.getV(), 0, hexSignature, 64, 1);
 
                 String certData = getKeystore(hexSignature);
+                Log.d("CKVerifier", address);
+                Log.d("CKVerifier", certData);
                 ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
                 ClipData clip = ClipData.newPlainText("Android CK certificates", certData);
                 clipboard.setPrimaryClip(clip);
